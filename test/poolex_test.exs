@@ -290,6 +290,43 @@ defmodule PoolexTest do
       assert debug_info.idle_workers_count == 0
     end
 
+    test "release overflow busy worker to grace when caller dies" do
+      pool_name = start_pool(worker_module: SomeWorker, workers_count: 0, max_overflow: 1, grace_period_ms: 15)
+
+      caller =
+        spawn(fn ->
+          Poolex.run(pool_name, fn pid ->
+            GenServer.call(pid, {:do_some_work_with_delay, :timer.seconds(4)})
+          end)
+        end)
+
+      :timer.sleep(10)
+
+      debug_info = Poolex.get_debug_info(pool_name)
+
+      assert debug_info.busy_workers_count == 1
+      assert debug_info.idle_workers_count == 0
+      assert debug_info.grace_workers_count == 0
+
+      Process.exit(caller, :kill)
+
+      :timer.sleep(10)
+
+      debug_info = Poolex.get_debug_info(pool_name)
+
+      assert debug_info.busy_workers_count == 0
+      assert debug_info.idle_workers_count == 1
+      assert debug_info.grace_workers_count == 1
+
+      :timer.sleep(10)
+
+      debug_info = Poolex.get_debug_info(pool_name)
+
+      assert debug_info.busy_workers_count == 0
+      assert debug_info.idle_workers_count == 0
+      assert debug_info.grace_workers_count == 0
+    end
+
     test "runtime errors" do
       pool_name = start_pool(worker_module: SomeWorker, workers_count: 1)
 

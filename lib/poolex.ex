@@ -27,6 +27,8 @@ defmodule Poolex do
 
   use GenServer, shutdown: :infinity
 
+  require Logger
+
   alias Poolex.Private.BusyWorkers
   alias Poolex.Private.DebugInfo
   alias Poolex.Private.IdleWorkers
@@ -63,6 +65,7 @@ defmodule Poolex do
           | {:worker_module, module()}
           | {:workers_count, non_neg_integer()}
           | {:max_overflow, non_neg_integer()}
+          | {:grace_period_ms, non_neg_integer()}
           | {:worker_args, list(any())}
           | {:worker_start_fun, atom()}
           | {:busy_workers_impl, module()}
@@ -262,6 +265,7 @@ defmodule Poolex do
     workers_count = Keyword.fetch!(opts, :workers_count)
 
     max_overflow = Keyword.get(opts, :max_overflow, 0)
+    grace_period_ms = Keyword.get(opts, :grace_period_ms, 0)
     worker_args = Keyword.get(opts, :worker_args, [])
     worker_start_fun = Keyword.get(opts, :worker_start_fun, :start_link)
 
@@ -277,6 +281,7 @@ defmodule Poolex do
     state =
       %State{
         max_overflow: max_overflow,
+        grace_period_ms: grace_period_ms,
         monitor_id: monitor_id,
         pool_id: pool_id,
         supervisor: supervisor,
@@ -358,6 +363,7 @@ defmodule Poolex do
     else
       {idle_worker_pid, state} = IdleWorkers.pop(state)
       state = BusyWorkers.add(state, idle_worker_pid)
+      |> remove_grace_worker(idle_worker_pid)
 
       {:reply, {:ok, idle_worker_pid}, state}
     end
@@ -375,6 +381,9 @@ defmodule Poolex do
       idle_workers_count: IdleWorkers.count(state),
       idle_workers_impl: state.idle_workers_impl,
       idle_workers_pids: IdleWorkers.to_list(state),
+      grace_period_ms: state.grace_period_ms,
+      grace_workers_count: :maps.size(state.grace_workers),
+      grace_workers_pids: :maps.keys(state.grace_workers),
       max_overflow: state.max_overflow,
       overflow: state.overflow,
       waiting_callers: WaitingCallers.to_list(state),
@@ -417,18 +426,55 @@ defmodule Poolex do
     end
   end
 
+  def handle_info(
+        {:grace_period_over, worker},
+        %State{} = state
+      ) do
+    state = remove_grace_worker(state, worker)
+    if state.overflow > 0 && IdleWorkers.member?(state, worker) do
+      {:noreply, IdleWorkers.remove(state, worker)}
+    else
+      {:noreply, state}
+    end
+  end
+
   @spec release_busy_worker(State.t(), worker()) :: State.t()
   defp release_busy_worker(%State{} = state, worker) do
     if BusyWorkers.member?(state, worker) do
       state = BusyWorkers.remove(state, worker)
 
       if state.overflow > 0 do
-        stop_worker(state.supervisor, worker)
+        if state.grace_period_ms == 0 do
+          stop_worker(state.supervisor, worker)
 
-        state
+          state
+        else
+          state
+          |> add_grace_worker(worker)
+          |> IdleWorkers.add(worker)
+        end
       else
         IdleWorkers.add(state, worker)
       end
+    else
+      state
+    end
+  end
+
+  defp add_grace_worker(state, worker) do
+    if Map.has_key?(state.grace_workers, worker) do
+      IO.inspect("Double add grace worker #{inspect(worker)}")
+      :erlang.cancel_timer(state.grace_workers[worker])
+    end
+    timer = :erlang.send_after(state.grace_period_ms, self(), {:grace_period_over, worker})
+    put_in(state.grace_workers[worker], timer)
+  end
+
+  defp remove_grace_worker(state, worker) do
+    if Map.has_key?(state.grace_workers, worker) do
+      {timer, state} = pop_in(state.grace_workers[worker])
+      :erlang.cancel_timer(timer)
+      state
     else
       state
     end
@@ -447,6 +493,7 @@ defmodule Poolex do
   defp handle_down_worker(%State{} = state, dead_process_pid) do
     state =
       state
+      |> remove_grace_worker(dead_process_pid)
       |> IdleWorkers.remove(dead_process_pid)
       |> BusyWorkers.remove(dead_process_pid)
 
