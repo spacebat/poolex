@@ -291,7 +291,13 @@ defmodule PoolexTest do
     end
 
     test "release overflow busy worker to grace when caller dies" do
-      pool_name = start_pool(worker_module: SomeWorker, workers_count: 0, max_overflow: 1, grace_period_ms: 15)
+      pool_name =
+        start_pool(
+          worker_module: SomeWorker,
+          workers_count: 0,
+          max_overflow: 1,
+          grace_period_ms: 15
+        )
 
       caller =
         spawn(fn ->

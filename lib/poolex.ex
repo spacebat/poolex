@@ -362,8 +362,10 @@ defmodule Poolex do
       end
     else
       {idle_worker_pid, state} = IdleWorkers.pop(state)
-      state = BusyWorkers.add(state, idle_worker_pid)
-      |> remove_grace_worker(idle_worker_pid)
+
+      state =
+        BusyWorkers.add(state, idle_worker_pid)
+        |> remove_grace_worker(idle_worker_pid)
 
       {:reply, {:ok, idle_worker_pid}, state}
     end
@@ -431,6 +433,7 @@ defmodule Poolex do
         %State{} = state
       ) do
     state = remove_grace_worker(state, worker)
+
     if state.overflow > 0 && IdleWorkers.member?(state, worker) do
       {:noreply, IdleWorkers.remove(state, worker)}
     else
@@ -466,6 +469,7 @@ defmodule Poolex do
       IO.inspect("Double add grace worker #{inspect(worker)}")
       :erlang.cancel_timer(state.grace_workers[worker])
     end
+
     timer = :erlang.send_after(state.grace_period_ms, self(), {:grace_period_over, worker})
     put_in(state.grace_workers[worker], timer)
   end
