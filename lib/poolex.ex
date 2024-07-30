@@ -436,7 +436,8 @@ defmodule Poolex do
     state = remove_grace_worker(state, worker)
 
     if state.overflow > 0 && IdleWorkers.member?(state, worker) do
-      {:noreply, IdleWorkers.remove(state, worker)}
+      state = IdleWorkers.remove(state, worker)
+      {:noreply, %State{state | overflow: state.overflow - 1}}
     else
       {:noreply, state}
     end
