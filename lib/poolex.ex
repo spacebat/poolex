@@ -45,6 +45,7 @@ defmodule Poolex do
   | `worker_module`        | Name of module that implements our worker            | `MyApp.Worker`        | **option is required**            |
   | `workers_count`        | How many workers should be running in the pool       | `5`                   | **option is required**            |
   | `max_overflow`         | How many workers can be created over the limit       | `2`                   | `0`                               |
+  | `grace_period_ms`      | How long idle workers over countwill be held on to.  | `30_000`              | `0`                               |
   | `worker_args`          | List of arguments passed to the start function       | `[:gg, "wp"]`         | `[]`                              |
   | `worker_start_fun`     | Name of the function that starts the worker          | `:run`                | `:start_link`                     |
   | `busy_workers_impl`    | Module that describes how to work with busy workers  | `SomeBusyWorkersImpl` | `Poolex.Workers.Impl.List`        |
