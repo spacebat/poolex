@@ -446,18 +446,17 @@ defmodule Poolex do
     if BusyWorkers.member?(state, worker) do
       state = BusyWorkers.remove(state, worker)
 
-      if state.overflow > 0 do
-        if state.grace_period_ms == 0 do
+      cond do
+        state.overflow > 0 && state.grace_period_ms <= 0 ->
           stop_worker(state.supervisor, worker)
 
           state
-        else
-          state
-          |> add_grace_worker(worker)
-          |> IdleWorkers.add(worker)
-        end
-      else
-        IdleWorkers.add(state, worker)
+
+        state.overflow > 0 ->
+          add_grace_worker(state, worker)
+
+        true ->
+          IdleWorkers.add(state, worker)
       end
     else
       state
@@ -466,12 +465,13 @@ defmodule Poolex do
 
   defp add_grace_worker(state, worker) do
     if Map.has_key?(state.grace_workers, worker) do
-      IO.inspect("Double add grace worker #{inspect(worker)}")
+      Logger.error("Double add grace worker #{inspect(worker)}")
       :erlang.cancel_timer(state.grace_workers[worker])
     end
 
     timer = :erlang.send_after(state.grace_period_ms, self(), {:grace_period_over, worker})
     put_in(state.grace_workers[worker], timer)
+    |> IdleWorkers.add(worker)
   end
 
   defp remove_grace_worker(state, worker) do
